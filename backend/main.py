@@ -9,6 +9,11 @@
 # pip list (to see installed packages)
 # pip install "fastapi[standard]"
 
+#GIT
+# git checkout -b branchName <--- creates new branch
+# git checkout develop <--- switches branches
+# git merge branchName <--- merges branch
+
 # > fastapi dev
 
 from fastapi import FastAPI
