@@ -36,68 +36,91 @@ def get_db():
         db.close()
 
 # Pydantic model (rules)
-class Task(BaseModel):
-    id: int | None = None
+class TaskCreate(BaseModel):
     title: str
-    done: bool = False
 
 class TaskUpdate(BaseModel):
     title: str | None = None
     done: bool | None = None
 
-# a temporary database
-tasks = [
-    Task(id=0, title="task0", done=False),
-    Task(id=1, title="task1", done=False),
-    Task(id=2, title="task2", done=True)
-]
-
-
 @app.get("/")
 def root():
-    return {"message": "Database is ready!"}
+    return {"message": "Woohoo!"}
 
 # get all tasks (with query parameter)
 @app.get("/tasks")
-def getTasks(done: bool | None = None, db: Session = Depends(get_db)):
-    if done is not None:
-        return [task for task in tasks if task.done == done]
-    return tasks
+def getTasks(rDone: bool | None = None, db: Session = Depends(get_db)):
+    tasks = db.query(models.Task)
+    if tasks.count() == 0:
+        raise HTTPException(status_code=404, detail="Tasks not found")
+    if rDone is not None:
+        tasks = tasks.filter(models.Task.done == rDone).all()
+    return tasks.all()
 
 # get a singular task
-@app.get("/tasks/{task_id}")
-def getTask(task_id: int, db: Session = Depends(get_db)):
-    for task in tasks:
-        if task.id == task_id:
-            return task
-    raise HTTPException(status_code=404, detail="Task not found")
+@app.get("/tasks/{rTaskId}")
+def getTask(rTaskId: int, db: Session = Depends(get_db)):
+    task = db.get(models.Task, rTaskId)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
         
 
 # add a new task
 @app.post("/tasks")
-def addTask(new: Task, db: Session = Depends(get_db)):
-    new.id = len(tasks)
-    tasks.append(new)
-    return new
+def addTask(rTask: TaskCreate, db: Session = Depends(get_db)):
+    newTask = models.Task(**rTask.model_dump())
+    try:
+        db.add(newTask)
+        db.commit()
+        db.refresh(newTask)
+        return newTask
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code = 500, detail="Couldn't upload task to the database")
 
 # update a task
-@app.patch("/tasks/{task_id}")
-def updateTask(task_id: int, updated: TaskUpdate, db: Session = Depends(get_db)):
-    for task in tasks:
-        if task.id == task_id:
-            if updated.title is not None:
-                task.title = updated.title
-            if updated.done is not None:
-                task.done = updated.done
-            return task
-    raise HTTPException(status_code=404, detail="Task not found")
+@app.patch("/tasks/{rTaskId}")
+def updateTask(rTaskId: int, rUpdated: TaskUpdate, db: Session = Depends(get_db)):
+    task = db.get(models.Task, rTaskId)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        if rUpdated.title is not None:
+            task.title = rUpdated.title
+        if rUpdated.done is not None:
+            task.done = rUpdated.done
+        db.commit()
+        db.refresh(task)
+        return task
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Couldn't update task in the database")
         
-# delete a task
-@app.delete("/tasks/{task_id}")
-def deleteTask(task_id: int, db: Session = Depends(get_db)):
-    for task in tasks:
-        if task.id == task_id:
-            tasks.remove(task)
-            return {"message": "Task removed successfully"}
-    raise HTTPException(status_code=404, detail="Task not found")
+# delete all tasks
+@app.delete("/tasks")
+def deleteAllTasks(db: Session = Depends(get_db)):
+    tasks = db.query(models.Task)
+    if tasks.count() == 0:
+        raise HTTPException(status_code=404, detail="Tasks not found")
+    try:
+        tasks.delete()
+        db.commit()
+        return {"message": "All tasks removed successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Couldn't delete all tasks from the database")
 
+# delete a task
+@app.delete("/tasks/{rTaskId}")
+def deleteTask(rTaskId: int, db: Session = Depends(get_db)):
+    task = db.get(models.Task, rTaskId)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        db.delete(task)
+        db.commit()
+        return {"message": "Task removed successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Couldn't delete task from the database")
