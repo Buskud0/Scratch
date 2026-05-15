@@ -19,7 +19,7 @@
 # > fastapi dev
 
 from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
+import schemas
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
 import models
@@ -34,14 +34,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-# Pydantic model (rules)
-class TaskCreate(BaseModel):
-    title: str
-
-class TaskUpdate(BaseModel):
-    title: str | None = None
-    done: bool | None = None
 
 @app.get("/")
 def root():
@@ -68,7 +60,7 @@ def getTask(rTaskId: int, db: Session = Depends(get_db)):
 
 # add a new task
 @app.post("/tasks")
-def addTask(rTask: TaskCreate, db: Session = Depends(get_db)):
+def addTask(rTask: schemas.TaskCreate, db: Session = Depends(get_db)):
     newTask = models.Task(**rTask.model_dump())
     try:
         db.add(newTask)
@@ -81,7 +73,7 @@ def addTask(rTask: TaskCreate, db: Session = Depends(get_db)):
 
 # update a task
 @app.patch("/tasks/{rTaskId}")
-def updateTask(rTaskId: int, rUpdated: TaskUpdate, db: Session = Depends(get_db)):
+def updateTask(rTaskId: int, rUpdated: schemas.TaskUpdate, db: Session = Depends(get_db)):
     task = db.get(models.Task, rTaskId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
