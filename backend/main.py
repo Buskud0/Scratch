@@ -1,28 +1,12 @@
 # Scratch TO-DO app!
-
-#1. Create a virtual environment
-# py -m venv env
-# .\env\Scripts\Activate.ps1
-
-#2. Pip package manager
-# pip list (to see installed packages)
-# pip install "fastapi[standard]"
-# pip install sqlalchemy pymysql
-
-#GIT
-# git checkout develop <--- switches branch to develop
-# git push origin develop <--- pushes changes to develop
-
-# git checkout -b feature-branch <--- creates new branch
-# git merge feature-branch <--- merges branch
-
-# > fastapi dev
+# > fastapi dev - run the app
 
 from fastapi import FastAPI, HTTPException, Depends
-import schemas
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
+from passlib.hash import pbkdf2_sha256
 import models
+import schemas
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
@@ -137,10 +121,10 @@ def getUser(rUserId: int, db: Session = Depends(get_db)):
 
 @app.post("/users/register")
 def registerUser(rUserDetails: schemas.UserDetails, db: Session = Depends(get_db)):
-    #hash password
     userExists = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if userExists:
         raise HTTPException(400, detail="User by this name already exists")
+    rUserDetails.password = pbkdf2_sha256.hash(rUserDetails.password)
     newUser = models.User(**rUserDetails.model_dump())
     try:
         db.add(newUser)
@@ -154,10 +138,12 @@ def registerUser(rUserDetails: schemas.UserDetails, db: Session = Depends(get_db
 
 @app.post("/users/login")
 def loginUser(rUserDetails: schemas.UserDetails, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.username == rUserDetails.username, models.User.password == rUserDetails.password).first()
+    user = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if not user: 
         raise HTTPException(400, detail="Wrong credentials")
     
+    if not pbkdf2_sha256.verify(rUserDetails.password, user.password):
+        raise HTTPException(401, detail="Invalid credentials")
     return {"message":"Login successful!", "id":user.id}
     #generate token
     

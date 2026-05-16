@@ -13,4 +13,4 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String(20), nullable=False)
-    password = Column(String(30), nullable=False)
+    password = Column(String(255), nullable=False)
