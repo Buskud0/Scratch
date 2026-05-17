@@ -7,9 +7,13 @@ from database import SessionLocal, engine, Base
 from passlib.hash import pbkdf2_sha256
 import models
 import schemas
+import jwt
+import os
+from datetime import datetime, timezone, timedelta
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
+secretKey = os.getenv("SECRET_KEY")
 
 # Database
 def get_db():
@@ -18,6 +22,22 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def createToken(username: str):
+    payload = {
+        "sub": username,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        "iat": datetime.now(timezone.utc)
+    }
+    token = jwt.encode(payload, secretKey, algorithm="HS256")
+    return token
+
+def verifyToken(token: str):
+    try:
+        decodedPayload = jwt.decode(token, secretKey, algorithm="HS256")
+        return decodedPayload
+    except jwt.InvalidTokenError:
+        return "Token is invalid"
 
 @app.get("/")
 def root():
@@ -141,11 +161,9 @@ def loginUser(rUserDetails: schemas.UserDetails, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if not user: 
         raise HTTPException(400, detail="Wrong credentials")
-    
     if not pbkdf2_sha256.verify(rUserDetails.password, user.password):
         raise HTTPException(401, detail="Invalid credentials")
-    return {"message":"Login successful!", "id":user.id}
-    #generate token
+    return {"token":createToken(rUserDetails.username)}
     
 @app.delete("/users/{rUserId}")
 def deleteUser(rUserId: int, db: Session = Depends(get_db)):
