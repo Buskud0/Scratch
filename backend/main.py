@@ -23,9 +23,9 @@ def get_db():
     finally:
         db.close()
 
-def createToken(username: str):
+def createToken(id: str):
     payload = {
-        "sub": username,
+        "sub": id,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
         "iat": datetime.now(timezone.utc)
     }
@@ -37,7 +37,7 @@ def verifyToken(token: str):
         decodedPayload = jwt.decode(token, secretKey, algorithm="HS256")
         return decodedPayload
     except jwt.InvalidTokenError:
-        return "Token is invalid"
+        raise HTTPException(404, "The token is invalid")
 
 @app.get("/")
 def root():
@@ -163,7 +163,7 @@ def loginUser(rUserDetails: schemas.UserDetails, db: Session = Depends(get_db)):
         raise HTTPException(400, detail="Wrong credentials")
     if not pbkdf2_sha256.verify(rUserDetails.password, user.password):
         raise HTTPException(401, detail="Invalid credentials")
-    return {"token":createToken(rUserDetails.username)}
+    return {"token":createToken(user.id)}
     
 @app.delete("/users/{rUserId}")
 def deleteUser(rUserId: int, db: Session = Depends(get_db)):
