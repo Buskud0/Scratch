@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
 from database import Base
 
 class Task(Base):
     __tablename__ = "tasks"
 
+    owner_id = Column(Integer, ForeignKey("users.id"))
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String(50), nullable=False)
     done = Column(Boolean, default = False)
