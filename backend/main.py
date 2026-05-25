@@ -41,9 +41,13 @@ def verifyToken(token: str):
     except jwt.InvalidTokenError:
         raise HTTPException(404, "The token is invalid")
 
-def getCurrentUser(token: str = Depends(getToken)):
+def getCurrentUser(token: str = Depends(getToken), db: Session = Depends(get_db)):
     payload = verifyToken(token)
-    return payload
+    userID = payload.get("sub")
+    user = db.query(models.User).filter(models.User.id == userID).first()
+    if not user:
+        raise HTTPException(401, "User no longer exists")
+    return user
 
 @app.get("/")
 def root():
@@ -53,31 +57,30 @@ def root():
 @app.get("/tasks")
 def getTasks(rDone: bool | None = None, 
              db: Session = Depends(get_db), 
-             payload: str = Depends(getCurrentUser)):
-    tasks = db.query(models.Task)
-    if tasks.count() == 0:
+             currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
+    if query.count() == 0:
         raise HTTPException(status_code=404, detail="Tasks not found")
     if rDone is not None:
-        tasks = tasks.filter(models.Task.done == rDone).all()
-    return tasks.all()
+        query = query.filter(models.Task.done == rDone).all()
+    return query
 
 # get a singular task
 @app.get("/tasks/{rTaskId}")
 def getTask(rTaskId: int, 
             db: Session = Depends(get_db),
-            payload: str = Depends(getCurrentUser)):
-    task = db.get(models.Task, rTaskId)
-    if not task:
+            currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
+    if not query:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
-        
+    return query
 
 # add a new task
 @app.post("/tasks")
 def addTask(rTask: schemas.TaskCreate, 
             db: Session = Depends(get_db),
-            payload: str = Depends(getCurrentUser)):
-    newTask = models.Task(**rTask.model_dump())
+            currentUser: models.User = Depends(getCurrentUser)):
+    newTask = models.Task(**rTask.model_dump(), owner_id = currentUser.id)
     try:
         db.add(newTask)
         db.commit()
@@ -93,18 +96,18 @@ def addTask(rTask: schemas.TaskCreate,
 def updateTask(rTaskId: int, 
                rUpdated: schemas.TaskUpdate, 
                db: Session = Depends(get_db),
-               payload: str = Depends(getCurrentUser)):
-    task = db.get(models.Task, rTaskId)
-    if not task:
+               currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
+    if not query:
         raise HTTPException(status_code=404, detail=f"Task {rTaskId} not found")
     try:
         if rUpdated.title is not None:
-            task.title = rUpdated.title
+            query.title = rUpdated.title
         if rUpdated.done is not None:
-            task.done = rUpdated.done
+            query.done = rUpdated.done
         db.commit()
-        db.refresh(task)
-        return task
+        db.refresh(query)
+        return query
     except Exception as e:
         db.rollback()
         print(f"Error: {e}")
@@ -113,12 +116,12 @@ def updateTask(rTaskId: int,
 # delete all tasks
 @app.delete("/tasks")
 def deleteAllTasks(db: Session = Depends(get_db),
-                   payload: str = Depends(getCurrentUser)):
-    tasks = db.query(models.Task)
-    if tasks.count() == 0:
+                   currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
+    if query.count() == 0:
         raise HTTPException(status_code=404, detail="Tasks not found")
     try:
-        tasks.delete()
+        query.delete()
         db.commit()
         return {"message": "All tasks removed successfully"}
     except Exception as e:
@@ -130,12 +133,12 @@ def deleteAllTasks(db: Session = Depends(get_db),
 @app.delete("/tasks/{rTaskId}")
 def deleteTask(rTaskId: int, 
                db: Session = Depends(get_db),
-               payload: str = Depends(getCurrentUser)):
-    task = db.get(models.Task, rTaskId)
-    if not task:
+               currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id)
+    if not query:
         raise HTTPException(status_code=404, detail=f"Task #{rTaskId} not found")
     try:
-        db.delete(task)
+        db.delete(query)
         db.commit()
         return {"message": "Task removed successfully"}
     except Exception as e:
@@ -143,27 +146,26 @@ def deleteTask(rTaskId: int,
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/users")
+@app.get("/users") #todo: admin check
 def getAllUsers(db: Session = Depends(get_db),
-                payload: str = Depends(getCurrentUser)):
+                currentUser: models.User = Depends(getCurrentUser)):
     users = db.query(models.User).all()
     if not users:
         raise HTTPException(404, detail="Couldn't find any users")
     return users
 
-@app.get("/users/{rUserId}")
+@app.get("/users/{rUserId}") #todo: admin check
 def getUser(rUserId: int, db: 
             Session = Depends(get_db),
-            payload: str = Depends(getCurrentUser)):
+            currentUser: models.User = Depends(getCurrentUser)):
     user = db.get(models.User, rUserId)
     if not user:
         raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
     return user
 
-@app.post("/users/register")
+@app.post("/users/register") 
 def registerUser(rUserDetails: schemas.UserDetails, 
-                 db: Session = Depends(get_db),
-                 payload: str = Depends(getCurrentUser)):
+                 db: Session = Depends(get_db)):
     userExists = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if userExists:
         raise HTTPException(400, detail="User by this name already exists")
@@ -181,8 +183,7 @@ def registerUser(rUserDetails: schemas.UserDetails,
 
 @app.post("/users/login")
 def loginUser(rUserDetails: schemas.UserDetails, 
-              db: Session = Depends(get_db),
-              payload: str = Depends(getCurrentUser)):
+              db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if not user: 
         raise HTTPException(400, detail="Wrong credentials")
@@ -190,16 +191,16 @@ def loginUser(rUserDetails: schemas.UserDetails,
         raise HTTPException(401, detail="Invalid credentials")
     return {"token":createToken(user.id)}
     
-@app.delete("/users/{rUserId}")
+@app.delete("/users/{rUserId}") #todo: admin check OR user
 def deleteUser(rUserId: int, db: Session = Depends(get_db),
-               payload: str = Depends(getCurrentUser)):
-    user = db.get(models.User, rUserId)
-    if not user:
+               currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.User).filter(models.User.UserId == rUserId, models.User.UserId == currentUser.id)
+    if not query:
         raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
     try:
-        db.delete(user)
+        db.delete(query)
         db.commit()
-        return {"message":f"Deleted user #{user.id} successfully"}
+        return {"message":f"Deleted user #{rUserId} successfully"}
     except Exception as e:
         db.rollback()
         print(f"Error: {e}")
