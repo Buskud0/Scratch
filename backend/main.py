@@ -25,9 +25,9 @@ def get_db():
     finally:
         db.close()
 
-def createToken(id: str):
+def createToken(id: int):
     payload = {
-        "sub": id,
+        "sub": str(id),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
         "iat": datetime.now(timezone.utc)
     }
@@ -36,10 +36,10 @@ def createToken(id: str):
 
 def verifyToken(token: str):
     try:
-        decodedPayload = jwt.decode(token, secretKey, algorithm="HS256")
+        decodedPayload = jwt.decode(token, secretKey, algorithms="HS256")
         return decodedPayload
-    except jwt.InvalidTokenError:
-        raise HTTPException(404, "The token is invalid")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="The token is invalid")
 
 def getCurrentUser(token: str = Depends(getToken), db: Session = Depends(get_db)):
     payload = verifyToken(token)
@@ -55,14 +55,15 @@ def root():
 
 # get all tasks (with query parameter)
 @app.get("/tasks")
-def getTasks(rDone: bool | None = None, 
+def getTasks(done: bool | None = None, 
              db: Session = Depends(get_db), 
              currentUser: models.User = Depends(getCurrentUser)):
     query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
-    if query.count() == 0:
+    if done is not None:
+        query = query.filter(models.Task.done == done)
+    query = query.all()
+    if not query:
         raise HTTPException(status_code=404, detail="Tasks not found")
-    if rDone is not None:
-        query = query.filter(models.Task.done == rDone).all()
     return query
 
 # get a singular task
@@ -121,7 +122,7 @@ def deleteAllTasks(db: Session = Depends(get_db),
     if query.count() == 0:
         raise HTTPException(status_code=404, detail="Tasks not found")
     try:
-        query.delete()
+        query.delete(synchronize_session=False)
         db.commit()
         return {"message": "All tasks removed successfully"}
     except Exception as e:
@@ -134,7 +135,7 @@ def deleteAllTasks(db: Session = Depends(get_db),
 def deleteTask(rTaskId: int, 
                db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
-    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id)
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
     if not query:
         raise HTTPException(status_code=404, detail=f"Task #{rTaskId} not found")
     try:
@@ -191,7 +192,7 @@ def loginUser(rUserDetails: schemas.UserDetails,
         raise HTTPException(401, detail="Invalid credentials")
     return {"token":createToken(user.id)}
     
-@app.delete("/users/{rUserId}") #todo: admin check OR user
+@app.delete("/users/{rUserId}") #todo: admin check
 def deleteUser(rUserId: int, db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
     query = db.query(models.User).filter(models.User.UserId == rUserId, models.User.UserId == currentUser.id)
