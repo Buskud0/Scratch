@@ -15,6 +15,7 @@ from fastapi.security import OAuth2PasswordBearer
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
 secretKey = os.getenv("SECRET_KEY")
+adminCode = os.getenv("ADMIN_CODE")
 getToken = OAuth2PasswordBearer(tokenUrl="login")
 
 # Database
@@ -147,22 +148,26 @@ def deleteTask(rTaskId: int,
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/users") #todo: admin check
+@app.get("/users")
 def getAllUsers(db: Session = Depends(get_db),
                 currentUser: models.User = Depends(getCurrentUser)):
-    users = db.query(models.User).all()
-    if not users:
+    query = db.query(models.User).all()
+    if not currentUser.is_admin:
+        raise HTTPException(403, detail="Missing administator permissions")
+    if not query:
         raise HTTPException(404, detail="Couldn't find any users")
-    return users
+    return query
 
-@app.get("/users/{rUserId}") #todo: admin check
+@app.get("/users/{rUserId}")
 def getUser(rUserId: int, db: 
             Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
-    user = db.get(models.User, rUserId)
-    if not user:
+    query = db.get(models.User, rUserId)
+    if not currentUser.is_admin and currentUser.id != query.id:
+        raise HTTPException(403, detail="Missing administator permissions")
+    if not query:
         raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
-    return user
+    return query
 
 @app.post("/users/register") 
 def registerUser(rUserDetails: schemas.UserDetails, 
@@ -170,13 +175,23 @@ def registerUser(rUserDetails: schemas.UserDetails,
     userExists = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if userExists:
         raise HTTPException(400, detail="User by this name already exists")
-    rUserDetails.password = pbkdf2_sha256.hash(rUserDetails.password)
-    newUser = models.User(**rUserDetails.model_dump())
+    newUser = models.User(
+        username=rUserDetails.username,
+        password=pbkdf2_sha256.hash(rUserDetails.password)
+    )
+    if rUserDetails.admin:
+        if rUserDetails.admin == adminCode:
+            newUser.is_admin = True
+        else:
+            raise HTTPException(401, detail="Incorrect admin code.")
+    else:
+        newUser.is_admin = False
+
     try:
         db.add(newUser)
         db.commit()
         db.refresh(newUser)
-        return {"message": "User created successfully!", "id": newUser.id}
+        return {"message": "User created successfully!", "id": newUser.id, "admin": newUser.is_admin}
     except Exception as e:
         db.rollback()
         print(f"Error: {e}")
@@ -185,19 +200,23 @@ def registerUser(rUserDetails: schemas.UserDetails,
 @app.post("/users/login")
 def loginUser(rUserDetails: schemas.UserDetails, 
               db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
-    if not user: 
+    query = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
+    if not query: 
         raise HTTPException(400, detail="Wrong credentials")
-    if not pbkdf2_sha256.verify(rUserDetails.password, user.password):
+    if not pbkdf2_sha256.verify(rUserDetails.password, query.password):
         raise HTTPException(401, detail="Invalid credentials")
-    return {"token":createToken(user.id)}
+    return {"message":"Logged in successfully!", 
+            "admin_status":query.is_admin ,
+            "token":createToken(query.id)}
     
-@app.delete("/users/{rUserId}") #todo: admin check
+@app.delete("/users/{rUserId}")
 def deleteUser(rUserId: int, db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
-    query = db.query(models.User).filter(models.User.UserId == rUserId, models.User.UserId == currentUser.id)
+    query = db.query(models.User).filter(models.User.id == rUserId).first()
     if not query:
         raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
+    if not currentUser.is_admin and currentUser.id != query.id:
+        raise HTTPException(403, detail="Missing administator permissions")
     try:
         db.delete(query)
         db.commit()
