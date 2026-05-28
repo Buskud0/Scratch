@@ -1,31 +1,22 @@
 # Scratch TO-DO app!
-
-#1. Create a virtual environment
-# py -m venv env
-# .\env\Scripts\Activate.ps1
-
-#2. Pip package manager
-# pip list (to see installed packages)
-# pip install "fastapi[standard]"
-# pip install sqlalchemy pymysql
-
-#GIT
-# git checkout develop <--- switches branch to develop
-# git push origin develop <--- pushes changes to develop
-
-# git checkout -b feature-branch <--- creates new branch
-# git merge feature-branch <--- merges branch
-
-# > fastapi dev
+# > fastapi dev - run the app
 
 from fastapi import FastAPI, HTTPException, Depends
-import schemas
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
+from passlib.hash import pbkdf2_sha256
 import models
+import schemas
+import jwt
+import os
+from datetime import datetime, timezone, timedelta
+from fastapi.security import OAuth2PasswordBearer
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
+secretKey = os.getenv("SECRET_KEY")
+adminCode = os.getenv("ADMIN_CODE")
+getToken = OAuth2PasswordBearer(tokenUrl="login")
 
 # Database
 def get_db():
@@ -35,33 +26,63 @@ def get_db():
     finally:
         db.close()
 
+def createToken(id: int):
+    payload = {
+        "sub": str(id),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        "iat": datetime.now(timezone.utc)
+    }
+    token = jwt.encode(payload, secretKey, algorithm="HS256")
+    return token
+
+def verifyToken(token: str):
+    try:
+        decodedPayload = jwt.decode(token, secretKey, algorithms="HS256")
+        return decodedPayload
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="The token is invalid")
+
+def getCurrentUser(token: str = Depends(getToken), db: Session = Depends(get_db)):
+    payload = verifyToken(token)
+    userID = payload.get("sub")
+    user = db.query(models.User).filter(models.User.id == userID).first()
+    if not user:
+        raise HTTPException(401, "User no longer exists")
+    return user
+
 @app.get("/")
 def root():
     return {"message": "Woohoo!"}
 
 # get all tasks (with query parameter)
 @app.get("/tasks")
-def getTasks(rDone: bool | None = None, db: Session = Depends(get_db)):
-    tasks = db.query(models.Task)
-    if tasks.count() == 0:
+def getTasks(done: bool | None = None, 
+             db: Session = Depends(get_db), 
+             currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
+    if done is not None:
+        query = query.filter(models.Task.done == done)
+    query = query.all()
+    if not query:
         raise HTTPException(status_code=404, detail="Tasks not found")
-    if rDone is not None:
-        tasks = tasks.filter(models.Task.done == rDone).all()
-    return tasks.all()
+    return query
 
 # get a singular task
 @app.get("/tasks/{rTaskId}")
-def getTask(rTaskId: int, db: Session = Depends(get_db)):
-    task = db.get(models.Task, rTaskId)
-    if not task:
+def getTask(rTaskId: int, 
+            db: Session = Depends(get_db),
+            currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
+    if not query:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
-        
+    return query
 
 # add a new task
 @app.post("/tasks")
-def addTask(rTask: schemas.TaskCreate, db: Session = Depends(get_db)):
-    newTask = models.Task(**rTask.model_dump())
+def addTask(rTask: schemas.TaskCreate, 
+            db: Session = Depends(get_db),
+            currentUser: models.User = Depends(getCurrentUser)):
+    newTask = models.Task(**rTask.model_dump(), owner_id = currentUser.id)
     try:
         db.add(newTask)
         db.commit()
@@ -69,50 +90,138 @@ def addTask(rTask: schemas.TaskCreate, db: Session = Depends(get_db)):
         return newTask
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code = 500, detail="Couldn't upload task to the database")
+        print(f"Error: {e}")
+        raise HTTPException(status_code = 500, detail="Internal server error")
 
 # update a task
 @app.patch("/tasks/{rTaskId}")
-def updateTask(rTaskId: int, rUpdated: schemas.TaskUpdate, db: Session = Depends(get_db)):
-    task = db.get(models.Task, rTaskId)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+def updateTask(rTaskId: int, 
+               rUpdated: schemas.TaskUpdate, 
+               db: Session = Depends(get_db),
+               currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
+    if not query:
+        raise HTTPException(status_code=404, detail=f"Task {rTaskId} not found")
     try:
         if rUpdated.title is not None:
-            task.title = rUpdated.title
+            query.title = rUpdated.title
         if rUpdated.done is not None:
-            task.done = rUpdated.done
+            query.done = rUpdated.done
         db.commit()
-        db.refresh(task)
-        return task
+        db.refresh(query)
+        return query
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Couldn't update task in the database")
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
         
 # delete all tasks
 @app.delete("/tasks")
-def deleteAllTasks(db: Session = Depends(get_db)):
-    tasks = db.query(models.Task)
-    if tasks.count() == 0:
+def deleteAllTasks(db: Session = Depends(get_db),
+                   currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
+    if query.count() == 0:
         raise HTTPException(status_code=404, detail="Tasks not found")
     try:
-        tasks.delete()
+        query.delete(synchronize_session=False)
         db.commit()
         return {"message": "All tasks removed successfully"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Couldn't delete all tasks from the database")
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # delete a task
 @app.delete("/tasks/{rTaskId}")
-def deleteTask(rTaskId: int, db: Session = Depends(get_db)):
-    task = db.get(models.Task, rTaskId)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+def deleteTask(rTaskId: int, 
+               db: Session = Depends(get_db),
+               currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
+    if not query:
+        raise HTTPException(status_code=404, detail=f"Task #{rTaskId} not found")
     try:
-        db.delete(task)
+        db.delete(query)
         db.commit()
         return {"message": "Task removed successfully"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Couldn't delete task from the database")
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/users")
+def getAllUsers(db: Session = Depends(get_db),
+                currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.User).all()
+    if not currentUser.is_admin:
+        raise HTTPException(403, detail="Missing administator permissions")
+    if not query:
+        raise HTTPException(404, detail="Couldn't find any users")
+    return query
+
+@app.get("/users/{rUserId}")
+def getUser(rUserId: int, db: 
+            Session = Depends(get_db),
+            currentUser: models.User = Depends(getCurrentUser)):
+    query = db.get(models.User, rUserId)
+    if not currentUser.is_admin and currentUser.id != query.id:
+        raise HTTPException(403, detail="Missing administator permissions")
+    if not query:
+        raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
+    return query
+
+@app.post("/users/register") 
+def registerUser(rUserDetails: schemas.UserDetails, 
+                 db: Session = Depends(get_db)):
+    userExists = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
+    if userExists:
+        raise HTTPException(400, detail="User by this name already exists")
+    newUser = models.User(
+        username=rUserDetails.username,
+        password=pbkdf2_sha256.hash(rUserDetails.password)
+    )
+    if rUserDetails.admin:
+        if rUserDetails.admin == adminCode:
+            newUser.is_admin = True
+        else:
+            raise HTTPException(401, detail="Incorrect admin code.")
+    else:
+        newUser.is_admin = False
+
+    try:
+        db.add(newUser)
+        db.commit()
+        db.refresh(newUser)
+        return {"message": "User created successfully!", "id": newUser.id, "admin": newUser.is_admin}
+    except Exception as e:
+        db.rollback()
+        print(f"Error: {e}")
+        raise HTTPException(500, detail="Internal server error")
+
+@app.post("/users/login")
+def loginUser(rUserDetails: schemas.UserDetails, 
+              db: Session = Depends(get_db)):
+    query = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
+    if not query: 
+        raise HTTPException(400, detail="Wrong credentials")
+    if not pbkdf2_sha256.verify(rUserDetails.password, query.password):
+        raise HTTPException(401, detail="Invalid credentials")
+    return {"message":"Logged in successfully!", 
+            "admin_status":query.is_admin ,
+            "token":createToken(query.id)}
+    
+@app.delete("/users/{rUserId}")
+def deleteUser(rUserId: int, db: Session = Depends(get_db),
+               currentUser: models.User = Depends(getCurrentUser)):
+    query = db.query(models.User).filter(models.User.id == rUserId).first()
+    if not query:
+        raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
+    if not currentUser.is_admin and currentUser.id != query.id:
+        raise HTTPException(403, detail="Missing administator permissions")
+    try:
+        db.delete(query)
+        db.commit()
+        return {"message":f"Deleted user #{rUserId} successfully"}
+    except Exception as e:
+        db.rollback()
+        print(f"Error: {e}")
+        raise HTTPException(500, detail="Internal server error")
