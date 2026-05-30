@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
 from passlib.hash import pbkdf2_sha256
+from typing import List
 import models
 import schemas
 import jwt
@@ -54,18 +55,33 @@ def getCurrentUser(token: str = Depends(getToken), db: Session = Depends(get_db)
 def root():
     return {"message": "Woohoo!"}
 
-# get all tasks (with query parameter)
-@app.get("/tasks")
+
+
+# HTTP
+# get all tasks
+@app.get("/tasks", response_model=List[schemas.TaskResponse], status_code=200)
 def getTasks(done: bool | None = None, 
              db: Session = Depends(get_db), 
              currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Requirements:**
+    - **Auth**: JWT Bearer Token required in Header.
+    - **Query**: `done` (bool, optional) to filter tasks by status.
+    
+    **Returns (The Contract):**
+    - **Status 200**: A list of Task objects. 
+    - **Empty State**: Returns `[]` if no tasks match the criteria (Standard practice).
+    - **Task Structure**: 
+        - `id`: Unique integer
+        - `title`: String
+        - `done`: Boolean
+        - `owner_id`: Integer linking to the user
+    """
     query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
     if done is not None:
         query = query.filter(models.Task.done == done)
-    query = query.all()
-    if not query:
-        raise HTTPException(status_code=404, detail="Tasks not found")
-    return query
+    results = query.all()
+    return results
 
 # get a singular task
 @app.get("/tasks/{rTaskId}")

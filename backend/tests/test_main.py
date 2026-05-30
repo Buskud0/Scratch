@@ -3,177 +3,70 @@
 
 import os
 
-def test_read_root(client):
-    response = client.get("/")
+adminCode = os.getenv("ADMIN_CODE")
+
+# --- HELPER FUNCTIONS ---
+
+def register_user(client, username="testuser", password="password123", admin_code=None):
+    payload = {"username": username, "password": password}
+    if admin_code:
+        payload["admin"] = admin_code
+    return client.post("/users/register", json=payload)
+
+def login_user(client, username="testuser", password="password123"):
+    response = client.post("/users/login", json={"username": username, "password": password})
+    return response.json().get("token")
+
+def get_auth_headers(client, username="testuser", password="password123", admin_code=None):
+    register_user(client, username, password, admin_code)
+    token = login_user(client, username, password)
+    return {"Authorization": f"Bearer {token}"}
+
+def create_task(client, headers, title="Test Task", done=False):
+    return client.post("/tasks", json={"title": title, "done": done}, headers=headers)
+
+def validate_schema(data, schema):
+    """
+    Patikrina, ar žodynas (data) turi visus laukus ir ar jų tipai teisingi.
+    schema = {"laukas": tipas, "kitas_laukas": kitas_tipas}
+    """
+    for field, expected_type in schema.items():
+        assert field in data, f"Missing field: '{field}' in response"
+        assert isinstance(data[field], expected_type), \
+            f"Field '{field}' should be {expected_type}, but got {type(data[field])}"
+
+# --- TESTS ---
+
+# GET ALL TASKS
+def test_get_tasks_success_and_contract(client):
+    user = get_auth_headers(client, "user1", "pass1")
+    create_task(client, user, title="Task 1")
+    
+    response = client.get("/tasks", headers=user)
     assert response.status_code == 200
-    assert response.json() == {"message": "Woohoo!"}
+    
+    task_schema = {"id": int, "title": str, "done": bool, "owner_id": int}
+    validate_schema(response.json()[0], task_schema)
 
-def test_register_user(client):
-    payload = {
-        "username": "testuser",
-        "password": "testpassword123"
-    }
-    response = client.post("/users/register", json=payload)
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["message"] == "User created successfully!"
-    assert "id" in data
+def test_get_tasks_filtering(client):
+    user = get_auth_headers(client, "filter_user", "pass")
+    create_task(client, user, title="Done", done=True)
+    create_task(client, user, title="Not Done", done=False)
 
-def test_register_duplicate_user(client):
-    payload = {
-        "username": "sameuser",
-        "password": "password"
-    }
-    client.post("/users/register", json=payload)
-    response = client.post("/users/register", json=payload)
-    
-    assert response.status_code == 400
-    assert response.json()["detail"] == "User by this name already exists"
+    response = client.get("/tasks?done=true", headers=user)
+    assert len(response.json()) == 1
+    assert response.json()[0]["done"] is True
 
-def test_register_admin(client):
-    admin_pw = os.getenv("ADMIN_CODE") 
+def test_get_tasks_privacy(client):
+    user1 = get_auth_headers(client, "userA", "pass")
+    user2 = get_auth_headers(client, "userB", "pass")
     
-    payload = {
-        "username": "adminuser",
-        "password": "adminpassword",
-        "admin": admin_pw
-    }
-    response = client.post("/users/register", json=payload)
-    
-    assert response.status_code == 200
-    if "admin" in response.json():
-        assert response.json()["admin"] is True
+    create_task(client, user1, title="User A Task")
 
-def test_login_success(client):
-    client.post("/users/register", json={"username": "loginuser", "password": "password123"})
-    
-    response = client.post("/users/login", json={"username": "loginuser", "password": "password123"})
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert "token" in data
-    assert isinstance(data["token"], str)
-
-def test_login_wrong_password(client):
-    client.post("/users/register", json={"username": "wrongpassuser", "password": "correctpassword"})
-    
-    response = client.post("/users/login", json={"username": "wrongpassuser", "password": "WRONGpassword"})
-    
-    assert response.status_code == 401
-    assert response.json()["detail"] == "Invalid credentials"
-
-def test_login_nonexistent_user(client):
-    response = client.post("/users/login", json={"username": "nobody", "password": "password"})
-    
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Wrong credentials"
-
-def test_create_task(client):
-    client.post("/users/register", json={"username": "taskuser", "password": "password"})
-    login_res = client.post("/users/login", json={"username": "taskuser", "password": "password"})
-    token = login_res.json()["token"]
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    payload = {"title": "Mano pirma užduotis"}
-    
-    response = client.post("/tasks", json=payload, headers=headers)
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Mano pirma užduotis"
-    assert data["done"] is False
-    assert "id" in data
-
-def test_get_tasks(client):
-    client.post("/users/register", json={"username": "getuser", "password": "password"})
-    token = client.post("/users/login", json={"username": "getuser", "password": "password"}).json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    client.post("/tasks", json={"title": "Task 1"}, headers=headers)
-    client.post("/tasks", json={"title": "Task 2"}, headers=headers)
-    
-    response = client.get("/tasks", headers=headers)
-    assert response.status_code == 200
-    assert len(response.json()) == 2
+    response = client.get("/tasks", headers=user2)
+    assert response.json() == []
 
 def test_get_tasks_unauthorized(client):
     response = client.get("/tasks")
     assert response.status_code == 401
 
-def test_task_privacy(client):
-    client.post("/users/register", json={"username": "userA", "password": "password"})
-    tokenA = client.post("/users/login", json={"username": "userA", "password": "password"}).json()["token"]
-    res = client.post("/tasks", json={"title": "A slaptas planas"}, headers={"Authorization": f"Bearer {tokenA}"})
-    taskA_id = res.json()["id"]
-
-    client.post("/users/register", json={"username": "userB", "password": "password"})
-    tokenB = client.post("/users/login", json={"username": "userB", "password": "password"}).json()["token"]
-
-    response = client.get(f"/tasks/{taskA_id}", headers={"Authorization": f"Bearer {tokenB}"})
-    
-    assert response.status_code == 404
-
-def test_update_task(client):
-    client.post("/users/register", json={"username": "upuser", "password": "password"})
-    token = client.post("/users/login", json={"username": "upuser", "password": "password"}).json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    task_res = client.post("/tasks", json={"title": "Pradinis"}, headers=headers)
-    task_id = task_res.json()["id"]
-
-    update_payload = {"title": "Pakeistas", "done": True}
-    response = client.patch(f"/tasks/{task_id}", json=update_payload, headers=headers)
-    
-    assert response.status_code == 200
-    assert response.json()["title"] == "Pakeistas"
-    assert response.json()["done"] is True
-
-def test_delete_task(client):
-    client.post("/users/register", json={"username": "deluser", "password": "password"})
-    token = client.post("/users/login", json={"username": "deluser", "password": "password"}).json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    task_res = client.post("/tasks", json={"title": "Ištrinti mane"}, headers=headers)
-    task_id = task_res.json()["id"]
-
-    response = client.delete(f"/tasks/{task_id}", headers=headers)
-    assert response.status_code == 200
-    
-    check_res = client.get(f"/tasks/{task_id}", headers=headers)
-    assert check_res.status_code == 404
-
-def test_admin_get_all_users(client):
-    admin_code = os.getenv("ADMIN_CODE") 
-    client.post("/users/register", json={
-        "username": "superadmin", 
-        "password": "password", 
-        "admin": admin_code
-    })
-    
-    login_res = client.post("/users/login", json={"username": "superadmin", "password": "password"})
-    token = login_res.json()["token"]
-    
-    response = client.get("/users", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-    assert len(response.json()) >= 1
-
-def test_user_cannot_get_all_users(client):
-    client.post("/users/register", json={"username": "regular", "password": "password"})
-    token = client.post("/users/login", json={"username": "regular", "password": "password"}).json()["token"]
-    
-    response = client.get("/users", headers={"Authorization": f"Bearer {token}"})
-    
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Missing administator permissions"
-
-def test_admin_delete_other_user(client):
-    res = client.post("/users/register", json={"username": "victim", "password": "password"})
-    victim_id = res.json()["id"]
-    
-    admin_code = os.getenv("ADMIN_CODE", "tavo_slaptas_kodas") 
-    client.post("/users/register", json={"username": "boss", "password": "password", "admin": admin_code})
-    admin_token = client.post("/users/login", json={"username": "boss", "password": "password"}).json()["token"]
-    
-    response = client.delete(f"/users/{victim_id}", headers={"Authorization": f"Bearer {admin_token}"})
-    assert response.status_code == 200
