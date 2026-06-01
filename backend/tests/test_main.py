@@ -39,6 +39,9 @@ def validate_schema(data, schema):
 
 # get all tasks
 def test_get_tasks_success_and_contract(client):
+    """
+    Verify successful retrieval of task list and schema compliance.
+    """
     user = get_auth_headers(client, "user1", "pass1")
     create_task(client, user, title="Task 1")
     
@@ -49,6 +52,9 @@ def test_get_tasks_success_and_contract(client):
     validate_schema(response.json()[0], task_schema)
 
 def test_get_tasks_filtering(client):
+    """
+    Verify that the 'done' query parameter correctly filters tasks.
+    """
     user = get_auth_headers(client, "filter_user", "pass")
     create_task(client, user, title="Done", done=True)
     create_task(client, user, title="Not Done", done=False)
@@ -58,6 +64,9 @@ def test_get_tasks_filtering(client):
     assert response.json()[0]["done"] is True
 
 def test_get_tasks_privacy(client):
+    """
+    Verify that a user cannot see another user's tasks.
+    """
     user1 = get_auth_headers(client, "userA", "pass")
     user2 = get_auth_headers(client, "userB", "pass")
     
@@ -67,6 +76,9 @@ def test_get_tasks_privacy(client):
     assert response.json() == []
 
 def test_get_tasks_unauthorized(client):
+    """
+    Verify that access is blocked without a valid JWT token.
+    """
     response = client.get("/tasks")
     assert response.status_code == 401
 
