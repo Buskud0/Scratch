@@ -98,7 +98,7 @@ def getTask(rTaskId: int,
     return query
 
 # add a new task
-@app.post("/tasks", response_model=schemas.TaskResponse)
+@app.post("/tasks", response_model=schemas.TaskResponse, status_code=201)
 def addTask(rTask: schemas.TaskCreate, 
             db: Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
@@ -153,7 +153,6 @@ def updateTask(rTaskId: int,
 @app.delete("/tasks")
 def deleteAllTasks(db: Session = Depends(get_db),
                    currentUser: models.User = Depends(getCurrentUser)):
-    query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
     """
     **Description:** Wipes all tasks for the authenticated user.
     - **Auth:** JWT Required.
@@ -161,6 +160,7 @@ def deleteAllTasks(db: Session = Depends(get_db),
     - **Returns:** 200 OK with success message.
     - **Errors:** 404 Not Found: User has no tasks to delete.
     """
+    query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
     if query.count() == 0:
         raise HTTPException(status_code=404, detail="Tasks not found")
     try:
@@ -196,6 +196,7 @@ def deleteTask(rTaskId: int,
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# get all users
 @app.get("/users", response_model=List[schemas.UserResponse])
 def getAllUsers(db: Session = Depends(get_db),
                 currentUser: models.User = Depends(getCurrentUser)):
@@ -212,6 +213,7 @@ def getAllUsers(db: Session = Depends(get_db),
         raise HTTPException(404, detail="Couldn't find any users")
     return query
 
+# get a singular user
 @app.get("/users/{rUserId}", response_model=schemas.UserResponse)
 def getUser(rUserId: int, db: 
             Session = Depends(get_db),
@@ -232,7 +234,8 @@ def getUser(rUserId: int, db:
     
     return query
 
-@app.post("/users/register", response_model=schemas.RegisterResponse) 
+# register a new user
+@app.post("/users/register", response_model=schemas.RegisterResponse, status_code=201) 
 def registerUser(rUserDetails: schemas.UserDetails, 
                  db: Session = Depends(get_db)):
     """
@@ -273,10 +276,10 @@ def registerUser(rUserDetails: schemas.UserDetails,
         print(f"Error: {e}")
         raise HTTPException(500, detail="Internal server error")
 
+# login a user
 @app.post("/users/login", response_model=schemas.LoginResponse)
 def loginUser(rUserDetails: schemas.UserDetails, 
               db: Session = Depends(get_db)):
-    query = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     """
     **Description:** Authenticates user and generates a JWT access token.
     - **Auth:** None
@@ -286,6 +289,7 @@ def loginUser(rUserDetails: schemas.UserDetails,
         - 400 Bad Request: Username not found.
         - 401 Unauthorized: Invalid password.
     """
+    query = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if not query: 
         raise HTTPException(400, detail="Wrong credentials")
     if not pbkdf2_sha256.verify(rUserDetails.password, query.password):
@@ -294,7 +298,8 @@ def loginUser(rUserDetails: schemas.UserDetails,
             "id":query.id,
             "is_admin":query.is_admin,
             "token":createToken(query.id)}
-    
+
+# delete a user
 @app.delete("/users/{rUserId}", response_model=schemas.DeleteUserResponse)
 def deleteUser(rUserId: int, db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
@@ -323,3 +328,6 @@ def deleteUser(rUserId: int, db: Session = Depends(get_db),
         db.rollback()
         print(f"Error: {e}")
         raise HTTPException(500, detail="Internal server error")
+
+
+# to do: PATCH user function!
