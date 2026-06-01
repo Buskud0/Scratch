@@ -53,6 +53,11 @@ def getCurrentUser(token: str = Depends(getToken), db: Session = Depends(get_db)
 
 @app.get("/")
 def root():
+    """
+    **Description:** Simple health check.
+    - **Auth:** None
+    - **Returns:** 200 OK with welcome message.
+    """
     return {"message": "Woohoo!"}
 
 
@@ -64,18 +69,11 @@ def getTasks(done: bool | None = None,
              db: Session = Depends(get_db), 
              currentUser: models.User = Depends(getCurrentUser)):
     """
-    **Requirements:**
-    - **Auth**: JWT Bearer Token required in Header.
-    - **Query**: `done` (bool, optional) to filter tasks by status.
-    
-    **Returns (The Contract):**
-    - **Status 200**: A list of Task objects. 
-    - **Empty State**: Returns `[]` if no tasks match the criteria (Standard practice).
-    - **Task Structure**: 
-        - `id`: Unique integer
-        - `title`: String
-        - `done`: Boolean
-        - `owner_id`: Integer linking to the user
+    **Description:** Returns all tasks belonging to the authenticated user.
+    - **Auth:** JWT Required.
+    - **Query Params:** `done` (Optional bool) to filter by status.
+    - **Logic:** Only returns tasks where `owner_id` matches `currentUser.id`.
+    - **Returns:** 200 OK with list of tasks (Empty list `[]` if none found).
     """
     query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
     if done is not None:
@@ -88,6 +86,15 @@ def getTasks(done: bool | None = None,
 def getTask(rTaskId: int, 
             db: Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Returns a specific task by its ID.
+    - **Auth:** JWT Required.
+    - **Logic:** 
+        - Verifies task exists.
+        - Verifies task belongs to the authenticated user.
+    - **Returns:** 200 OK with Task object.
+    - **Errors:** 404 Not Found: Task ID missing or owned by another user.
+    """
     query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
     if not query:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -98,6 +105,13 @@ def getTask(rTaskId: int,
 def addTask(rTask: schemas.TaskCreate, 
             db: Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Creates a new task for the authenticated user.
+    - **Auth:** JWT Required.
+    - **Requirements:** `title` (1-50 chars).
+    - **Logic:** Automatically assigns `owner_id` from the current user's session.
+    - **Returns:** 201 Created with saved Task object.
+    """
     newTask = models.Task(**rTask.model_dump(), owner_id = currentUser.id)
     try:
         db.add(newTask)
@@ -115,6 +129,13 @@ def updateTask(rTaskId: int,
                rUpdated: schemas.TaskUpdate, 
                db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Partially updates an existing task.
+    - **Auth:** JWT Required.
+    - **Logic:** Verifies ownership before applying updates to `title` or `done`.
+    - **Returns:** 200 OK with updated Task object.
+    - **Errors:** 404 Not Found: Task ID missing or owned by another user.
+    """
     query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
     if not query:
         raise HTTPException(status_code=404, detail=f"Task {rTaskId} not found")
@@ -136,6 +157,13 @@ def updateTask(rTaskId: int,
 def deleteAllTasks(db: Session = Depends(get_db),
                    currentUser: models.User = Depends(getCurrentUser)):
     query = db.query(models.Task).filter(models.Task.owner_id == currentUser.id)
+    """
+    **Description:** Wipes all tasks for the authenticated user.
+    - **Auth:** JWT Required.
+    - **Logic:** Deletes all rows where `owner_id` matches `currentUser.id`.
+    - **Returns:** 200 OK with success message.
+    - **Errors:** 404 Not Found: User has no tasks to delete.
+    """
     if query.count() == 0:
         raise HTTPException(status_code=404, detail="Tasks not found")
     try:
@@ -152,6 +180,13 @@ def deleteAllTasks(db: Session = Depends(get_db),
 def deleteTask(rTaskId: int, 
                db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Deletes a specific task.
+    - **Auth:** JWT Required.
+    - **Logic:** Verifies ownership before deletion.
+    - **Returns:** 200 OK with success message.
+    - **Errors:** 404 Not Found: Task ID missing or owned by another user.
+    """
     query = db.query(models.Task).filter(models.Task.id == rTaskId, models.Task.owner_id == currentUser.id).first()
     if not query:
         raise HTTPException(status_code=404, detail=f"Task #{rTaskId} not found")
@@ -167,6 +202,12 @@ def deleteTask(rTaskId: int,
 @app.get("/users")
 def getAllUsers(db: Session = Depends(get_db),
                 currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Lists all registered users (Admin only).
+    - **Auth:** JWT + Admin rights required.
+    - **Returns:** 200 OK with list of User objects (passwords excluded).
+    - **Errors:** 403 Forbidden: Authenticated user is not an admin.
+    """
     query = db.query(models.User).all()
     if not currentUser.is_admin:
         raise HTTPException(403, detail="Missing administator permissions")
@@ -178,6 +219,14 @@ def getAllUsers(db: Session = Depends(get_db),
 def getUser(rUserId: int, db: 
             Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Returns details for a specific user (Admin only).
+    - **Auth:** JWT + Admin rights required.
+    - **Returns:** 200 OK with User object.
+    - **Errors:** 
+        - 403 Forbidden: Authenticated user is not an admin.
+        - 404 Not Found: User ID does not exist.
+    """
     query = db.get(models.User, rUserId)
     if not currentUser.is_admin and currentUser.id != query.id:
         raise HTTPException(403, detail="Missing administator permissions")
@@ -188,6 +237,19 @@ def getUser(rUserId: int, db:
 @app.post("/users/register") 
 def registerUser(rUserDetails: schemas.UserDetails, 
                  db: Session = Depends(get_db)):
+    """
+    **Description:** Creates a new user account and hashes the password.
+    - **Auth:** None
+    - **Requirements:** 
+        - `username`: Unique string (1-20 chars).
+        - `password`: Plain text (will be hashed).
+        - `admin`: Optional string (matches secret code for admin rights).
+    - **Logic:** Sets `is_admin` to True if secret code matches, else False.
+    - **Returns:** 201 Created with user ID and success message.
+    - **Errors:** 
+        - 400 Bad Request: Username already exists.
+        - 401 Unauthorized: Admin code provided but incorrect.
+    """
     userExists = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
     if userExists:
         raise HTTPException(400, detail="User by this name already exists")
@@ -217,6 +279,15 @@ def registerUser(rUserDetails: schemas.UserDetails,
 def loginUser(rUserDetails: schemas.UserDetails, 
               db: Session = Depends(get_db)):
     query = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
+    """
+    **Description:** Authenticates user and generates a JWT access token.
+    - **Auth:** None
+    - **Requirements:** Valid `username` and `password`.
+    - **Returns:** 200 OK with JWT token and role-specific message.
+    - **Errors:** 
+        - 400 Bad Request: Username not found.
+        - 401 Unauthorized: Invalid password.
+    """
     if not query: 
         raise HTTPException(400, detail="Wrong credentials")
     if not pbkdf2_sha256.verify(rUserDetails.password, query.password):
@@ -228,6 +299,17 @@ def loginUser(rUserDetails: schemas.UserDetails,
 @app.delete("/users/{rUserId}")
 def deleteUser(rUserId: int, db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Deletes a user account.
+    - **Auth:** JWT Required.
+    - **Logic:** 
+        - Admins can delete any user.
+        - Regular users can only delete their own account.
+    - **Returns:** 200 OK with success message.
+    - **Errors:** 
+        - 403 Forbidden: Attempting to delete another user without admin rights.
+        - 404 Not Found: User ID does not exist.
+    """
     query = db.query(models.User).filter(models.User.id == rUserId).first()
     if not query:
         raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
