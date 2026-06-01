@@ -20,5 +20,25 @@ class TaskResponse(BaseModel):
     done: bool
     owner_id: int
 
+class LoginResponse(BaseModel):
+    message: str
+    id: int
+    is_admin: bool
+    token: str
+
+class UserResponse(BaseModel):
+    id: int
+    is_admin: bool
+    username: str
+    
+class RegisterResponse(BaseModel):
+    message: str
+    id: int
+    is_admin: bool
+
+class DeleteUserResponse(BaseModel):
+    message: str
+    username: str
+
 class Config:
     from_attributes = True

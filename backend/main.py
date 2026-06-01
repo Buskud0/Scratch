@@ -60,9 +60,6 @@ def root():
     """
     return {"message": "Woohoo!"}
 
-
-
-# HTTP
 # get all tasks
 @app.get("/tasks", response_model=List[schemas.TaskResponse], status_code=200)
 def getTasks(done: bool | None = None, 
@@ -82,7 +79,7 @@ def getTasks(done: bool | None = None,
     return results
 
 # get a singular task
-@app.get("/tasks/{rTaskId}")
+@app.get("/tasks/{rTaskId}", response_model=schemas.TaskResponse)
 def getTask(rTaskId: int, 
             db: Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
@@ -101,7 +98,7 @@ def getTask(rTaskId: int,
     return query
 
 # add a new task
-@app.post("/tasks")
+@app.post("/tasks", response_model=schemas.TaskResponse)
 def addTask(rTask: schemas.TaskCreate, 
             db: Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
@@ -124,7 +121,7 @@ def addTask(rTask: schemas.TaskCreate,
         raise HTTPException(status_code = 500, detail="Internal server error")
 
 # update a task
-@app.patch("/tasks/{rTaskId}")
+@app.patch("/tasks/{rTaskId}", response_model=schemas.TaskResponse)
 def updateTask(rTaskId: int, 
                rUpdated: schemas.TaskUpdate, 
                db: Session = Depends(get_db),
@@ -199,7 +196,7 @@ def deleteTask(rTaskId: int,
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/users")
+@app.get("/users", response_model=List[schemas.UserResponse])
 def getAllUsers(db: Session = Depends(get_db),
                 currentUser: models.User = Depends(getCurrentUser)):
     """
@@ -208,14 +205,14 @@ def getAllUsers(db: Session = Depends(get_db),
     - **Returns:** 200 OK with list of User objects (passwords excluded).
     - **Errors:** 403 Forbidden: Authenticated user is not an admin.
     """
-    query = db.query(models.User).all()
     if not currentUser.is_admin:
         raise HTTPException(403, detail="Missing administator permissions")
+    query = db.query(models.User).all()
     if not query:
         raise HTTPException(404, detail="Couldn't find any users")
     return query
 
-@app.get("/users/{rUserId}")
+@app.get("/users/{rUserId}", response_model=schemas.UserResponse)
 def getUser(rUserId: int, db: 
             Session = Depends(get_db),
             currentUser: models.User = Depends(getCurrentUser)):
@@ -228,13 +225,14 @@ def getUser(rUserId: int, db:
         - 404 Not Found: User ID does not exist.
     """
     query = db.get(models.User, rUserId)
-    if not currentUser.is_admin and currentUser.id != query.id:
-        raise HTTPException(403, detail="Missing administator permissions")
     if not query:
         raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
+    if not currentUser.is_admin and currentUser.id != query.id:
+        raise HTTPException(403, detail="Missing administator permissions")
+    
     return query
 
-@app.post("/users/register") 
+@app.post("/users/register", response_model=schemas.RegisterResponse) 
 def registerUser(rUserDetails: schemas.UserDetails, 
                  db: Session = Depends(get_db)):
     """
@@ -269,13 +267,13 @@ def registerUser(rUserDetails: schemas.UserDetails,
         db.add(newUser)
         db.commit()
         db.refresh(newUser)
-        return {"message": "User created successfully!", "id": newUser.id, "admin": newUser.is_admin}
+        return {"message": "User created successfully!", "id": newUser.id, "is_admin": newUser.is_admin}
     except Exception as e:
         db.rollback()
         print(f"Error: {e}")
         raise HTTPException(500, detail="Internal server error")
 
-@app.post("/users/login")
+@app.post("/users/login", response_model=schemas.LoginResponse)
 def loginUser(rUserDetails: schemas.UserDetails, 
               db: Session = Depends(get_db)):
     query = db.query(models.User).filter(models.User.username == rUserDetails.username).first()
@@ -293,10 +291,11 @@ def loginUser(rUserDetails: schemas.UserDetails,
     if not pbkdf2_sha256.verify(rUserDetails.password, query.password):
         raise HTTPException(401, detail="Invalid credentials")
     return {"message":"Logged in successfully!", 
-            "admin_status":query.is_admin ,
+            "id":query.id,
+            "is_admin":query.is_admin,
             "token":createToken(query.id)}
     
-@app.delete("/users/{rUserId}")
+@app.delete("/users/{rUserId}", response_model=schemas.DeleteUserResponse)
 def deleteUser(rUserId: int, db: Session = Depends(get_db),
                currentUser: models.User = Depends(getCurrentUser)):
     """
@@ -318,7 +317,8 @@ def deleteUser(rUserId: int, db: Session = Depends(get_db),
     try:
         db.delete(query)
         db.commit()
-        return {"message":f"Deleted user #{rUserId} successfully"}
+        return {"message":f"Deleted user #{rUserId} successfully",
+                "username":query.username}
     except Exception as e:
         db.rollback()
         print(f"Error: {e}")
