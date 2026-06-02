@@ -2,6 +2,7 @@
 # > pytest
 
 import os
+from schemas import TaskResponse, UserResponse, RegisterResponse, LoginResponse, DeleteUserResponse
 
 adminCode = os.getenv("ADMIN_CODE")
 
@@ -48,8 +49,7 @@ def test_get_tasks_success_and_contract(client):
     response = client.get("/tasks", headers=user)
     assert response.status_code == 200
     
-    task_schema = {"id": int, "title": str, "done": bool, "owner_id": int}
-    validate_schema(response.json()[0], task_schema)
+    TaskResponse.model_validate(response.json()[0])
 
 def test_get_tasks_filtering(client):
     """
@@ -86,15 +86,13 @@ def test_get_tasks_unauthorized(client):
 def test_get_task_success_and_contract(client):
     """Test successfully getting a task by ID and verifying the schema."""
     user = get_auth_headers(client, "single_task_user", "pass")
-    
     created_res = create_task(client, user, title="Specific Task")
     task_id = created_res.json()["id"]
     
     response = client.get(f"/tasks/{task_id}", headers=user)
     assert response.status_code == 200
     
-    task_schema = {"id": int, "title": str, "done": bool, "owner_id": int}
-    validate_schema(response.json(), task_schema)
+    TaskResponse.model_validate(response.json())
     assert response.json()["title"] == "Specific Task"
 
 def test_get_task_privacy(client):
@@ -144,8 +142,7 @@ def test_add_task_success_and_contract(client, session):
     assert response.status_code == 201
     data = response.json()
     
-    task_schema = {"id": int, "title": str, "done": bool, "owner_id": int}
-    validate_schema(data, task_schema)
+    TaskResponse.model_validate(data)
     
     assert data["title"] == "Clean the kitchen"
     assert data["owner_id"] == user_id
@@ -187,8 +184,7 @@ def test_update_task_success_and_contract(client, session):
     assert response.status_code == 200
     data = response.json()
     
-    task_schema = {"id": int, "title": str, "done": bool, "owner_id": int}
-    validate_schema(data, task_schema)
+    TaskResponse.model_validate(data)
     
     assert data["title"] == "New Title"
     assert data["done"] is True
@@ -347,9 +343,8 @@ def test_get_all_users_admin_success_and_contract(client):
     users = response.json()
     assert len(users) >= 2
 
-    user_schema = {"id": int, "username": str, "is_admin": bool}
     for user in users:
-        validate_schema(user, user_schema)
+        UserResponse.model_validate(user)
         assert "password" not in user
 
 def test_get_all_users_regular_user_forbidden(client):
@@ -390,8 +385,7 @@ def test_get_user_admin_success_and_contract(client):
     assert response.status_code == 200
     data = response.json()
     
-    user_schema = {"id": int, "username": str, "is_admin": bool}
-    validate_schema(data, user_schema)
+    UserResponse.model_validate(data)
     assert data["username"] == "target_user"
     assert "password" not in data
 
@@ -467,9 +461,7 @@ def test_register_user_success_and_contract(client, session):
     assert response.status_code == 201
     data = response.json()
     
-    register_schema = {"message": str, "id": int, "is_admin": bool}
-    validate_schema(data, register_schema)
-    
+    RegisterResponse.model_validate(data)
     assert data["is_admin"] is False
     
     # Verify DB entry and password hashing
@@ -542,13 +534,7 @@ def test_login_success_and_contract(client):
     assert response.status_code == 200
     data = response.json()
     
-    login_schema = {
-        "message": str, 
-        "id": int, 
-        "is_admin": bool, 
-        "token": str
-    }
-    validate_schema(data, login_schema)
+    LoginResponse.model_validate(data)
     
     assert data["message"] == "Logged in successfully!"
     assert data["is_admin"] is False
@@ -607,8 +593,7 @@ def test_delete_user_self_success(client, session):
     data = response.json()
     
     # Verify Contract
-    delete_schema = {"message": str, "username": str}
-    validate_schema(data, delete_schema)
+    DeleteUserResponse.model_validate(data)
     assert data["username"] == username
 
     # 4. Verify DB is empty
