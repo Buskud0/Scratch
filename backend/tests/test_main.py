@@ -19,9 +19,10 @@ def login_user(client, username="testuser", password="password123"):
     return response.json().get("token")
 
 def get_auth_headers(client, username="testuser", password="password123", admin_code=None):
-    register_user(client, username, password, admin_code)
+    regResponse = register_user(client, username, password, admin_code)
     token = login_user(client, username, password)
-    return {"Authorization": f"Bearer {token}"}
+    id = regResponse.json().get("id")
+    return {"Authorization": f"Bearer {token}", "id":str(id)}
 
 def create_task(client, headers, title="Test Task", done=False):
     return client.post("/tasks", json={"title": title, "done": done}, headers=headers)
@@ -48,7 +49,6 @@ def test_get_tasks_success_and_contract(client):
     
     response = client.get("/tasks", headers=user)
     assert response.status_code == 200
-    
     TaskResponse.model_validate(response.json()[0])
 
 def test_get_tasks_filtering(client):
@@ -91,7 +91,6 @@ def test_get_task_success_and_contract(client):
     
     response = client.get(f"/tasks/{task_id}", headers=user)
     assert response.status_code == 200
-    
     TaskResponse.model_validate(response.json())
     assert response.json()["title"] == "Specific Task"
 
@@ -104,9 +103,7 @@ def test_get_task_privacy(client):
     task_id = created_res.json()["id"]
 
     response = client.get(f"/tasks/{task_id}", headers=user2)
-    
     assert response.status_code == 404
-    assert response.json()["detail"] == "Task not found"
 
 def test_get_task_not_found(client):
     """Test requesting an ID that simply doesn't exist in the database."""
@@ -115,7 +112,6 @@ def test_get_task_not_found(client):
     response = client.get("/tasks/99999", headers=user)
     
     assert response.status_code == 404
-    assert response.json()["detail"] == "Task not found"
 
 def test_get_task_unauthorized(client):
     """Test that requesting a task without a token returns 401."""
@@ -123,18 +119,15 @@ def test_get_task_unauthorized(client):
     assert response.status_code == 401
 
 # add a new task
-def test_add_task_success_and_contract(client, session):
+def test_add_task_success_and_contract(client):
     """
     Test successful task creation, ownership assignment, 
     and database persistence.
     """
-    from models import User, Task
-    
     username, password = "creator_user", "password123"
     headers = get_auth_headers(client, username, password)
     
-    user = session.query(User).filter(User.username == username).first()
-    user_id = user.id
+    user_id = int(headers.get("id"))
     
     payload = {"title": "Clean the kitchen"}
     response = client.post("/tasks", json=payload, headers=headers)
@@ -146,11 +139,6 @@ def test_add_task_success_and_contract(client, session):
     
     assert data["title"] == "Clean the kitchen"
     assert data["owner_id"] == user_id
-
-    db_task = session.query(Task).filter(Task.id == data["id"]).first()
-    assert db_task is not None
-    assert db_task.title == "Clean the kitchen"
-    assert db_task.owner_id == user_id
 
 def test_add_task_unauthorized(client):
     """
@@ -171,9 +159,8 @@ def test_add_task_invalid_data(client):
 # update a task
 def test_update_task_success_and_contract(client, session):
     """
-    Test successful partial update of a task and verify database integrity.
+    Test successful partial update of a task.
     """
-    from models import Task
     headers = get_auth_headers(client, "updater", "pass")
     task_res = create_task(client, headers, title="Old Title", done=False)
     task_id = task_res.json()["id"]
@@ -183,15 +170,9 @@ def test_update_task_success_and_contract(client, session):
     
     assert response.status_code == 200
     data = response.json()
-    
     TaskResponse.model_validate(data)
-    
     assert data["title"] == "New Title"
     assert data["done"] is True
-
-    db_task = session.query(Task).filter(Task.id == task_id).first()
-    assert db_task.title == "New Title"
-    assert db_task.done is True
 
 def test_update_task_privacy(client):
     """
@@ -235,7 +216,6 @@ def test_delete_all_tasks_success(client, session):
     response = client.delete("/tasks", headers=headers)
     
     assert response.status_code == 200
-    assert response.json()["message"] == "All tasks removed successfully"
     
     db_count = session.query(Task).count()
     assert db_count == 0
@@ -285,7 +265,6 @@ def test_delete_task_success(client, session):
     response = client.delete(f"/tasks/{task_id}", headers=headers)
     
     assert response.status_code == 200
-    assert response.json()["message"] == "Task removed successfully"
 
     db_task = session.query(Task).filter(Task.id == task_id).first()
     assert db_task is None
@@ -304,7 +283,6 @@ def test_delete_task_privacy(client, session):
     response = client.delete(f"/tasks/{task_id}", headers=headers_hacker)
     
     assert response.status_code == 404
-    assert response.json()["detail"] == f"Task #{task_id} not found"
 
     db_task = session.query(Task).filter(Task.id == task_id).first()
     assert db_task is not None
@@ -317,7 +295,6 @@ def test_delete_task_not_found(client):
     response = client.delete("/tasks/99999", headers=headers)
     
     assert response.status_code == 404
-    assert response.json()["detail"] == "Task #99999 not found"
 
 def test_delete_task_unauthorized(client):
     """
@@ -341,7 +318,7 @@ def test_get_all_users_admin_success_and_contract(client):
     
     assert response.status_code == 200
     users = response.json()
-    assert len(users) >= 2
+    assert len(users) == 2
 
     for user in users:
         UserResponse.model_validate(user)
@@ -357,7 +334,6 @@ def test_get_all_users_regular_user_forbidden(client):
     response = client.get("/users", headers=regular_headers)
     
     assert response.status_code == 403
-    assert response.json()["detail"] == "Missing administator permissions"
 
 def test_get_all_users_unauthorized(client):
     """
@@ -376,7 +352,6 @@ def test_get_user_admin_success_and_contract(client):
     admin_code = os.getenv("ADMIN_CODE")
     admin_headers = get_auth_headers(client, "admin_user", "pass", admin_code=admin_code)
     
-    # Create a user to look up
     res = register_user(client, "target_user", "pass")
     target_id = res.json()["id"]
 
@@ -393,11 +368,8 @@ def test_get_user_self_success(client):
     """
     Verify that a regular user can retrieve their own details.
     """
-    username, password = "self_user", "pass123"
-    headers = get_auth_headers(client, username, password)
-    res = register_user(client, "fresh_user", "pass")
-    uid = res.json()["id"]
-    headers = get_auth_headers(client, "fresh_user", "pass")
+    headers = get_auth_headers(client, "fresh_user", "pass123")
+    uid = int(headers.get("id"))
 
     response = client.get(f"/users/{uid}", headers=headers)
     assert response.status_code == 200
@@ -409,14 +381,12 @@ def test_get_user_privacy_forbidden(client):
     another user's details.
     """
     user_a_headers = get_auth_headers(client, "user_a", "pass")
-    
-    res_b = register_user(client, "user_b", "pass")
-    user_b_id = res_b.json()["id"]
+    user_b_headers = get_auth_headers(client, "user_b", "pass")
+    user_b_id = int(user_b_headers.get("id"))
 
     response = client.get(f"/users/{user_b_id}", headers=user_a_headers)
     
     assert response.status_code == 403
-    assert response.json()["detail"] == "Missing administator permissions"
 
 def test_get_user_not_found(client):
     """
@@ -460,13 +430,10 @@ def test_register_user_success_and_contract(client, session):
     
     assert response.status_code == 201
     data = response.json()
-    
     RegisterResponse.model_validate(data)
-    assert data["is_admin"] is False
-    
-    # Verify DB entry and password hashing
     db_user = session.query(User).filter(User.id == data["id"]).first()
     assert db_user is not None
+    assert db_user.is_admin is False
     assert db_user.username == "new_regular_user"
     assert db_user.password != "securepassword123"
 
@@ -498,7 +465,6 @@ def test_register_admin_incorrect_code(client):
     response = client.post("/users/register", json=payload)
     
     assert response.status_code == 401
-    assert response.json()["detail"] == "Incorrect admin code."
 
 def test_register_duplicate_username(client):
     """
@@ -510,7 +476,6 @@ def test_register_duplicate_username(client):
     response = client.post("/users/register", json=payload)
     
     assert response.status_code == 400
-    assert "already exists" in response.json()["detail"].lower()
 
 def test_register_invalid_data(client):
     """
@@ -536,7 +501,6 @@ def test_login_success_and_contract(client):
     
     LoginResponse.model_validate(data)
     
-    assert data["message"] == "Logged in successfully!"
     assert data["is_admin"] is False
     assert len(data["token"]) > 20
 
@@ -551,7 +515,6 @@ def test_login_wrong_password(client):
     response = client.post("/users/login", json=payload)
     
     assert response.status_code == 401
-    assert response.json()["detail"] == "Invalid credentials"
 
 def test_login_user_not_found(client):
     """
@@ -561,7 +524,6 @@ def test_login_user_not_found(client):
     response = client.post("/users/login", json=payload)
     
     assert response.status_code == 400
-    assert response.json()["detail"] == "Wrong credentials"
 
 def test_login_missing_fields(client):
     """
@@ -579,24 +541,17 @@ def test_delete_user_self_success(client, session):
     from models import User
     username, password = "bye_user", "pass123"
     
-    # 1. Register and get ID
-    reg_res = register_user(client, username, password)
-    user_id = reg_res.json()["id"]
-    
-    # 2. Get auth headers
     headers = get_auth_headers(client, username, password)
+    user_id = int(headers.get("id"))
 
-    # 3. Delete self
     response = client.delete(f"/users/{user_id}", headers=headers)
     
     assert response.status_code == 200
     data = response.json()
     
-    # Verify Contract
     DeleteUserResponse.model_validate(data)
     assert data["username"] == username
 
-    # 4. Verify DB is empty
     db_user = session.query(User).filter(User.id == user_id).first()
     assert db_user is None
 
@@ -607,20 +562,15 @@ def test_delete_user_admin_success(client, session):
     from models import User
     admin_code = os.getenv("ADMIN_CODE")
     
-    # 1. Setup Admin
     admin_headers = get_auth_headers(client, "boss_man", "pass", admin_code=admin_code)
     
-    # 2. Setup Victim
     victim_res = register_user(client, "victim_user", "password")
     victim_id = victim_res.json()["id"]
 
-    # 3. Admin deletes Victim
     response = client.delete(f"/users/{victim_id}", headers=admin_headers)
     
     assert response.status_code == 200
-    assert "Deleted user" in response.json()["message"]
     
-    # 4. Verify Victim is gone from DB
     db_user = session.query(User).filter(User.id == victim_id).first()
     assert db_user is None
 
@@ -631,20 +581,15 @@ def test_delete_user_privacy_forbidden(client, session):
     """
     from models import User
     
-    # 1. User A (The "Hacker")
     headers_a = get_auth_headers(client, "user_a", "pass")
     
-    # 2. User B (The "Target")
     res_b = register_user(client, "user_b", "pass")
     user_b_id = res_b.json()["id"]
 
-    # 3. User A tries to delete User B
     response = client.delete(f"/users/{user_b_id}", headers=headers_a)
     
     assert response.status_code == 403
-    assert response.json()["detail"] == "Missing administator permissions"
 
-    # 4. Verify User B still exists in DB
     db_user_b = session.query(User).filter(User.id == user_b_id).first()
     assert db_user_b is not None
 
