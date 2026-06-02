@@ -12,11 +12,15 @@ import jwt
 import os
 from datetime import datetime, timezone, timedelta
 from fastapi.security import OAuth2PasswordBearer
+from dotenv import load_dotenv
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
+load_dotenv()
 secretKey = os.getenv("SECRET_KEY")
 adminCode = os.getenv("ADMIN_CODE")
+if not secretKey or not adminCode:
+    raise Exception("SECRET_KEY and ADMIN_CODE must be set in environment variables")
 getToken = OAuth2PasswordBearer(tokenUrl="login")
 
 # Database
@@ -358,7 +362,7 @@ def updateUser(rUserDetails: schemas.UserUpdate,
             query.username = rUserDetails.username
         if rUserDetails.password is not None:
             query.password = pbkdf2_sha256.hash(rUserDetails.password)
-        if rUserDetails.admin_code is not None:
+        if rUserDetails.admin_code:
             if rUserDetails.admin_code == adminCode:
                 query.is_admin = True
             elif rUserDetails.admin_code == "false":
@@ -368,6 +372,8 @@ def updateUser(rUserDetails: schemas.UserUpdate,
         db.commit()
         db.refresh(query)
         return query
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         print(f"Error: {e}")

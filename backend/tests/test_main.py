@@ -2,16 +2,17 @@
 # > pytest
 
 import os
+from dotenv import load_dotenv
 from schemas import TaskResponse, UserResponse, RegisterResponse, LoginResponse, DeleteUserResponse
 
+load_dotenv()
 adminCode = os.getenv("ADMIN_CODE")
 
 # --- HELPER FUNCTIONS ---
 
 def register_user(client, username="testuser", password="password123", admin_code=None):
-    payload = {"username": username, "password": password}
-    if admin_code:
-        payload["admin"] = admin_code
+    payload = {"username": username, "password": password, 
+               "admin_code": admin_code}
     return client.post("/users/register", json=payload)
 
 def login_user(client, username="testuser", password="password123"):
@@ -309,8 +310,7 @@ def test_get_all_users_admin_success_and_contract(client):
     Verify that an admin can retrieve the full user list and that 
     the response follows the UserResponse schema (no passwords).
     """
-    admin_code = os.getenv("ADMIN_CODE")
-    admin_headers = get_auth_headers(client, "admin_boss", "pass", admin_code=admin_code)
+    admin_headers = get_auth_headers(client, "admin_boss", "pass", admin_code=adminCode)
     
     register_user(client, "other_user", "pass")
 
@@ -349,8 +349,7 @@ def test_get_user_admin_success_and_contract(client):
     Verify that an admin can retrieve another user's details 
     and that the response follows the UserResponse schema.
     """
-    admin_code = os.getenv("ADMIN_CODE")
-    admin_headers = get_auth_headers(client, "admin_user", "pass", admin_code=admin_code)
+    admin_headers = get_auth_headers(client, "admin_user", "pass", admin_code=adminCode)
     
     res = register_user(client, "target_user", "pass")
     target_id = res.json()["id"]
@@ -392,8 +391,7 @@ def test_get_user_not_found(client):
     """
     Verify 404 response when an admin searches for a non-existent user ID.
     """
-    admin_code = os.getenv("ADMIN_CODE")
-    admin_headers = get_auth_headers(client, "admin_searcher", "pass", admin_code=admin_code)
+    admin_headers = get_auth_headers(client, "admin_searcher", "pass", admin_code=adminCode)
     
     response = client.get("/users/99999", headers=admin_headers)
     assert response.status_code == 404
@@ -444,7 +442,7 @@ def test_register_admin_success(client):
     payload = {
         "username": "new_admin",
         "password": "adminpassword",
-        "admin": os.getenv("ADMIN_CODE")
+        "admin_code": adminCode
     }
     
     response = client.post("/users/register", json=payload)
@@ -459,7 +457,7 @@ def test_register_admin_incorrect_code(client):
     payload = {
         "username": "hacker_admin",
         "password": "password",
-        "admin": "wrong_secret_code"
+        "admin_code": "wrong_secret_code"
     }
     
     response = client.post("/users/register", json=payload)
@@ -560,9 +558,8 @@ def test_delete_user_admin_success(client, session):
     Verify that an admin can delete another user's account.
     """
     from models import User
-    admin_code = os.getenv("ADMIN_CODE")
     
-    admin_headers = get_auth_headers(client, "boss_man", "pass", admin_code=admin_code)
+    admin_headers = get_auth_headers(client, "boss_man", "pass", admin_code=adminCode)
     
     victim_res = register_user(client, "victim_user", "password")
     victim_id = victim_res.json()["id"]
@@ -597,8 +594,7 @@ def test_delete_user_not_found(client):
     """
     Verify 404 response when attempting to delete a non-existent user ID.
     """
-    admin_code = os.getenv("ADMIN_CODE")
-    admin_headers = get_auth_headers(client, "admin_cleaner", "pass", admin_code=admin_code)
+    admin_headers = get_auth_headers(client, "admin_cleaner", "pass", admin_code=adminCode)
     
     response = client.delete("/users/99999", headers=admin_headers)
     assert response.status_code == 404
@@ -610,4 +606,102 @@ def test_delete_user_unauthorized(client):
     response = client.delete("/users/1")
     assert response.status_code == 401
 
-# todo: update user
+# update user
+def test_update_user_self_success(client):
+    """
+    Verify that a user can update their own username and the response matches the schema.
+    """
+    auth = get_auth_headers(client, "oldname", "pass123")
+    user_id = auth.get("id")
+
+    payload = {"username": "newname"}
+    response = client.patch(f"/users/{user_id}", json=payload, headers=auth)
+
+    assert response.status_code == 200
+    data = response.json()
+    
+    UserResponse.model_validate(data)
+    assert data["username"] == "newname"
+
+def test_update_user_password_hashing(client, session):
+    """
+    Verify that updating a password correctly hashes the new password in the database.
+    """
+    from models import User
+    auth = get_auth_headers(client, "hashuser", "oldpass")
+    user_id = int(auth.get("id"))
+
+    payload = {"password": "new_secure_password"}
+    response = client.patch(f"/users/{user_id}", json=payload, headers=auth)
+
+    assert response.status_code == 200
+    
+    db_user = session.query(User).filter(User.id == user_id).first()
+    assert db_user.password != "new_secure_password"
+    assert len(db_user.password) > 30 # Check it's a hash string
+
+def test_update_user_privacy_forbidden(client):
+    """
+    Verify that User A cannot update User B's details (403).
+    """
+    auth_a = get_auth_headers(client, "user_a", "pass")
+    auth_b = get_auth_headers(client, "user_b", "pass")
+    user_b_id = auth_b.get("id")
+
+    response = client.patch(f"/users/{user_b_id}", json={"username": "hacked"}, headers=auth_a)
+    
+    assert response.status_code == 403
+
+def test_update_user_promote_to_admin(client):
+    """
+    Verify that a user becomes an admin when providing the correct admin_code.
+    """
+    auth = get_auth_headers(client, "regular_user", "pass")
+    user_id = auth.get("id")
+
+    payload = {"admin_code": adminCode}
+    response = client.patch(f"/users/{user_id}", json=payload, headers=auth)
+
+    assert response.status_code == 200
+    assert response.json()["is_admin"] is True
+
+def test_update_user_demote_admin(client):
+    """
+    Verify that an admin can be demoted by providing "false" as the admin_code.
+    """
+    auth = get_auth_headers(client, "admin_to_demote", "pass", admin_code=adminCode)
+    user_id = auth.get("id")
+
+    payload = {"admin_code": "false"}
+    response = client.patch(f"/users/{user_id}", json=payload, headers=auth)
+
+    assert response.status_code == 200
+    assert response.json()["is_admin"] is False
+
+def test_update_user_wrong_admin_code(client):
+    """
+    Verify that an incorrect admin code returns a 401 Unauthorized error.
+    """
+    auth = get_auth_headers(client, "user", "pass")
+    user_id = auth.get("id")
+
+    payload = {"admin_code": "wrong_code_123"}
+    response = client.patch(f"/users/{user_id}", json=payload, headers=auth)
+
+    assert response.status_code == 401
+
+def test_update_user_not_found(client):
+    """
+    Verify that an admin trying to update a non-existent ID gets a 404.
+    """
+    admin_headers = get_auth_headers(client, "admin", "pass", admin_code=adminCode)
+    
+    response = client.patch("/users/99999", json={"username": "ghost"}, headers=admin_headers)
+    assert response.status_code == 404
+
+def test_update_user_unauthorized(client):
+    """
+    Verify that the endpoint is protected by JWT.
+    """
+    response = client.patch("/users/1", json={"username": "anon"})
+    assert response.status_code == 401
