@@ -12,7 +12,12 @@ class TaskUpdate(BaseModel):
 class UserDetails(BaseModel):
     username: str
     password: str
-    admin: Optional[str] = False
+    admin_code: Optional[str] = False
+
+class UserUpdate(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    admin_code: Optional[str] = None
 
 class TaskResponse(BaseModel):
     id: int

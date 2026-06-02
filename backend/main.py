@@ -258,8 +258,8 @@ def registerUser(rUserDetails: schemas.UserDetails,
         username=rUserDetails.username,
         password=pbkdf2_sha256.hash(rUserDetails.password)
     )
-    if rUserDetails.admin:
-        if rUserDetails.admin == adminCode:
+    if rUserDetails.admin_code:
+        if rUserDetails.admin_code == adminCode:
             newUser.is_admin = True
         else:
             raise HTTPException(401, detail="Incorrect admin code.")
@@ -330,4 +330,46 @@ def deleteUser(rUserId: int, db: Session = Depends(get_db),
         raise HTTPException(500, detail="Internal server error")
 
 
-# to do: PATCH user function!
+# update user details
+@app.patch("/users/{rUserId}", response_model=schemas.UserResponse)
+def updateUser(rUserDetails: schemas.UserUpdate,
+               rUserId: int, db: Session = Depends(get_db),
+               currentUser: models.User = Depends(getCurrentUser)):
+    """
+    **Description:** Partially updates user account details.
+    - **Auth:** JWT Required.
+    - **Logic:** 
+        - Admins can update any user account.
+        - Regular users can only update their own account.
+        - Password is automatically hashed if provided.
+        - Only users with existing Admin rights can modify the 'is_admin' status.
+    - **Returns:** 200 OK with the updated User object.
+    - **Errors:** 
+        - 403 Forbidden: Attempting to update another user without admin rights.
+        - 404 Not Found: User ID does not exist.
+    """
+    query = db.query(models.User).filter(models.User.id == rUserId).first()
+    if not currentUser.is_admin and currentUser.id != query.id:
+        raise HTTPException(403, detail="Missing administator permissions")
+    if not query:
+        raise HTTPException(404, detail=f"Couldn't find user #{rUserId}")
+    try:
+        if rUserDetails.username is not None:
+            query.username = rUserDetails.username
+        if rUserDetails.password is not None:
+            query.password = pbkdf2_sha256.hash(rUserDetails.password)
+        if rUserDetails.admin_code is not None:
+            if rUserDetails.admin_code == adminCode:
+                query.is_admin = True
+            elif rUserDetails.admin_code == "false":
+                query.is_admin = False
+            else:
+                raise HTTPException(401, detail="Incorrect admin code.")
+        db.commit()
+        db.refresh(query)
+        return query
+    except Exception as e:
+        db.rollback()
+        print(f"Error: {e}")
+        raise HTTPException(500, detail="Internal server error")
+    
