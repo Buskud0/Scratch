@@ -1,6 +1,3 @@
-# Scratch TO-DO app!
-# > fastapi dev - run the app
-
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
